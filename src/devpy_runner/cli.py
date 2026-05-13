@@ -49,6 +49,7 @@ def _main(args: list[str]) -> int:
         clean(config)
         return 0
 
+    reject_editable_pip_install(args)
     ensure_venv(config)
     return run_passthrough(config, args)
 
@@ -163,6 +164,39 @@ def run_passthrough(config: DevpyConfig, args: list[str]) -> int:
     return completed.returncode
 
 
+def reject_editable_pip_install(args: list[str]) -> None:
+    """Reject ad hoc editable installs managed outside devpy.toml."""
+    if not _is_pip_install(args):
+        return
+    if not _contains_editable_flag(args):
+        return
+
+    raise DevpyError(
+        "editable installs must be declared in devpy.toml and installed with "
+        "`devpy update-editables`; do not run ad hoc `pip install -e ...` "
+        "through devpy",
+    )
+
+
+def _is_pip_install(args: list[str]) -> bool:
+    if len(args) >= 2 and args[0] == "pip" and args[1] == "install":
+        return True
+    return (
+        len(args) >= 4
+        and args[0] == "python"
+        and args[1:4]
+        == [
+            "-m",
+            "pip",
+            "install",
+        ]
+    )
+
+
+def _contains_editable_flag(args: list[str]) -> bool:
+    return any(arg == "-e" or arg == "--editable" for arg in args)
+
+
 def run_checked(
     args: list[str],
     *,
@@ -218,8 +252,7 @@ def _print_help() -> None:
         "  devpy info\n"
         "  devpy update-editables\n"
         "  devpy clean\n"
-        "  devpy python -m pytest\n"
-        "  devpy pip install -e .",
+        "  devpy python -m pytest",
     )
 
 

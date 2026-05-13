@@ -76,9 +76,12 @@ Run normal commands through the worktree `.venv`:
 
 ```bash
 devpy python script.py
-devpy pip install -e .
 devpy pytest
 ```
+
+Editable installs are intentionally not managed through ad hoc
+`devpy pip install -e ...` commands. Add editable packages to `devpy.toml`, then
+run `devpy update-editables`.
 
 Remove the worktree `.venv`:
 

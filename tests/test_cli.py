@@ -12,6 +12,7 @@ from devpy_runner.cli import (
     devpy_env,
     ensure_venv,
     find_git_root,
+    reject_editable_pip_install,
     update_editables,
 )
 from devpy_runner.config import DevpyConfig, DevpyError
@@ -148,3 +149,31 @@ def test_devpy_env_prefers_venv_bin(tmp_path: Path) -> None:
 
     assert env["PATH"].split(":")[0] == str(tmp_path / ".venv" / "bin")
     assert env["PYTHONNOUSERSITE"] == "1"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["pip", "install", "-e", "."],
+        ["pip", "install", "--editable", "."],
+        ["python", "-m", "pip", "install", "-e", "."],
+        ["python", "-m", "pip", "install", "--editable", "."],
+    ],
+)
+def test_reject_editable_pip_install(args: list[str]) -> None:
+    """Reject editable installs outside devpy.toml."""
+    with pytest.raises(DevpyError, match="devpy update-editables"):
+        reject_editable_pip_install(args)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["pip", "install", "requests"],
+        ["python", "-m", "pip", "install", "requests"],
+        ["pytest"],
+    ],
+)
+def test_allow_non_editable_passthrough_commands(args: list[str]) -> None:
+    """Allow ordinary passthrough commands."""
+    reject_editable_pip_install(args)
