@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "devpy-runner"
 version = "0.1.0"
-description = "Run Python commands through a git-worktree-local venv overlay backed by conda."
+description = "Editable Python installs in git worktrees without copying heavy dependencies."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
