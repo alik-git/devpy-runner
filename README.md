@@ -1,180 +1,119 @@
-# Python Package Template
+# devpy-runner
 
-A minimal template for building a modern Python package.
+`devpy` is a small command for running Python commands through a
+git-worktree-local `.venv` overlay backed by a named conda environment.
 
-This template includes a standard `src/` package layout, Ruff formatting and
-linting, mypy type checking, pytest, pre-commit hygiene checks, GitHub Actions
-CI, and package build checks for both pip and uv workflows.
+It is meant for development repos where conda owns the heavy dependency stack
+and the worktree-local `.venv` owns editable installs.
 
-## Template Setup
+## Status
 
-1. Pick a package name.
+This is an early prototype. Version 1 is intentionally conda-only.
 
-   Use a short lowercase import name like `numpy` or `pandas`. The import
-   package name is usually underscore-separated, while the PyPI/project name may
-   use hyphens.
+## Install
 
-2. Rename the package folder:
-
-   ```bash
-   mv src/mypackage src/your_package_name
-   ```
-
-3. Replace `mypackage` with your package name in:
-
-   - `name`
-   - `[project.urls]`
-   - `[project.scripts]`
-   - Ruff `known-first-party`
-   - mypy `files`
-   - `tests/test_package.py`
-   - `AGENTS.md`
-   - this README
-
-   Most of these are in [`pyproject.toml`](pyproject.toml).
-
-4. Fill in basic package metadata in [`pyproject.toml`](pyproject.toml):
-
-   - `description`
-   - `authors`
-   - `maintainers`
-   - `keywords`
-   - `classifiers`
-
-5. Add a license if the package will be public or open source. The files under
-   [`templates/licenses`](templates/licenses) are templates only and do not
-   license this repository.
-
-   ```bash
-   cp templates/licenses/MIT LICENSE
-   ```
-
-   or:
-
-   ```bash
-   cp templates/licenses/Apache-2.0 LICENSE
-   ```
-
-   Then replace the copyright placeholder and add the matching `license` value
-   in `pyproject.toml`, either `MIT` or `Apache-2.0`.
-
-   After choosing a license, the templates can be removed.
-
-6. Add your code under `src/your_package_name/` and, if needed, expose a public
-   API from `src/your_package_name/__init__.py`.
-
-7. Update this README as needed for the package you are building.
-
-## Installation
-
-Recommended with `uv`:
-
-```bash
-uv sync --extra dev
-```
-
-This repository commits `.python-version` and `uv.lock` so the uv workflow uses
-Python 3.11 by default and resolves reproducible dependency versions. After
-changing package metadata or dependencies, update the lockfile with:
-
-```bash
-uv lock
-```
-
-Standard Python fallback:
+From this checkout:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-Conda can still own the outer environment if needed:
+That exposes the command:
 
 ```bash
-conda create -n mypackage python=3.11
-conda activate mypackage
-python -m pip install -e ".[dev]"
+devpy --help
 ```
 
-## Getting Started
+## Repo Setup
 
-Run the starter Python API:
+Add `devpy.toml` at the git root of a repo that should use `devpy`:
 
-```python
-import mypackage
+```toml
+[python]
+base_conda_env = "my-conda-env"
 
-result = mypackage.do_useful_thing("world")
+[editables]
+packages = [
+  ".",
+]
 ```
 
-Run the starter CLI:
+For multiple editable local packages:
+
+```toml
+[python]
+base_conda_env = "my-conda-env"
+
+[editables]
+packages = [
+  ".",
+  "../some-sibling-package",
+  "../another-sibling-package",
+]
+```
+
+Editable paths are resolved relative to the git root. They may point to sibling
+checkouts. The `.venv` path defaults to `.venv` and must stay inside the git
+root.
+
+Add `.venv/` to `.gitignore`.
+
+## Usage
+
+Show the current setup:
 
 ```bash
-mypackage
+devpy info
 ```
 
-## Development Workflow
-
-Run the standard checks before opening a PR:
+Create `.venv` if needed and install configured editables:
 
 ```bash
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy
-uv run pytest
-uv run pre-commit run --all-files
-uv build
+devpy update-editables
 ```
 
-If you are using standard Python tools instead of uv:
+Run normal commands through the worktree `.venv`:
 
 ```bash
-python -m ruff format --check .
-python -m ruff check .
-python -m mypy
-python -m pytest
-python -m pre_commit run --all-files
-python -m build
+devpy python script.py
+devpy pip install -e .
+devpy pytest
 ```
 
-Pre-commit hooks are optional. To enable local checks before each commit:
+Remove the worktree `.venv`:
 
 ```bash
-uv run pre-commit install
+devpy clean
 ```
 
-## Project Layout
+## Behavior
 
-```text
-src/mypackage/
-  __init__.py   # public import surface
-  package.py    # reusable package logic
-  cli.py        # command-line boundary
-  py.typed      # marker for typed packages
+`devpy` does this:
 
-tests/
-  test_package.py
+1. Uses `git rev-parse --show-toplevel` to find the current git worktree root.
+2. Requires `devpy.toml` at that root.
+3. Creates `.venv` with:
+
+   ```bash
+   conda run -n <base_conda_env> --no-capture-output \
+     python -m venv --system-site-packages .venv
+   ```
+
+4. Runs normal commands with `.venv/bin` first on `PATH`.
+5. Sets `PYTHONNOUSERSITE=1`.
+
+By default, `update-editables` uses `pip install --no-deps -e ...` because the
+base conda environment is expected to own dependencies. If a repo needs editable
+dependencies installed into `.venv`, set:
+
+```toml
+[editables]
+install_deps = true
+packages = ["."]
 ```
 
-## CI / GitHub Actions
+## Unsupported By Design
 
-GitHub Actions runs:
-
-- fast Ruff-only checks
-- Ruff, mypy, pre-commit hygiene, and pytest
-- package build and wheel smoke test with pip
-- package build and wheel smoke test with uv
-
-Local pre-commit hooks are not installed automatically. Running
-`pre-commit install` is optional.
-
-## Documentation
-
-Project documentation lives in [`docs/`](docs/):
-
-- [`docs/api.md`](docs/api.md): public API notes and examples
-- [`docs/ci-private-submodules.md`](docs/ci-private-submodules.md): GitHub
-  Actions setup for private submodules
-
-## Troubleshooting
-
-Add project-specific troubleshooting notes here when setup or runtime issues
-come up repeatedly.
+Version 1 does not support uv-managed environments, non-conda base
+environments, or automatic dependency solving. Those can be added later if the
+conda-backed overlay workflow proves useful.
