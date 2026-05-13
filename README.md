@@ -1,36 +1,66 @@
 # devpy-runner
 
-`devpy` is a small command for running Python commands through a
-git-worktree-local `.venv` overlay backed by a named conda environment.
+Editable Python installs in git worktrees without copying heavy dependencies.
 
-It is meant for development repos where conda owns the heavy dependency stack
-and the worktree-local `.venv` owns editable installs.
+`devpy` runs commands through a git-worktree-local `.venv` overlay backed by a
+shared conda environment. Use it when conda owns the heavy dependency stack and
+each worktree needs its own editable Python installs.
+
+## Why
+
+Git worktrees are useful for working on multiple branches at once, but Python
+editable installs make them easy to misuse:
+
+- one shared conda env can accidentally import code from the wrong worktree
+- one full conda env per worktree duplicates large dependencies
+- `PYTHONPATH` skips normal package metadata and console scripts
+
+`devpy` keeps the split explicit:
+
+- conda env: heavy shared dependencies
+- worktree `.venv`: editable local packages and console scripts
+- `devpy.toml`: the worktree's configuration
 
 ## Status
 
-This is an early prototype. Version 1 is intentionally conda-only.
+Version 1 is intentionally conda-only. It does not solve dependency management
+for every Python project; it solves the conda-backed worktree overlay workflow.
 
 ## Install
 
-From this checkout:
+From PyPI:
+
+```bash
+python -m pip install devpy-runner
+```
+
+For development from this checkout:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-That exposes the command:
+Check the command:
 
 ```bash
 devpy --help
 ```
 
-## Repo Setup
+## Quick Start
 
-Add `devpy.toml` at the git root of a repo that should use `devpy`:
+Create a shared conda environment that has your normal dependencies, but not the
+editable package you are developing:
+
+```bash
+conda create -n myproject-shared python=3.11 pip -y
+conda run -n myproject-shared python -m pip install -U pip
+```
+
+In a git worktree, add `devpy.toml` at the git root:
 
 ```toml
 [python]
-base_conda_env = "my-conda-env"
+base_conda_env = "myproject-shared"
 
 [editables]
 packages = [
@@ -38,11 +68,47 @@ packages = [
 ]
 ```
 
-For multiple editable local packages:
+Create the worktree `.venv` and install configured editables:
+
+```bash
+devpy update-editables
+```
+
+Run commands through the worktree environment:
+
+```bash
+devpy python -c "import sys; print(sys.executable)"
+devpy pytest
+devpy python scripts/example.py
+```
+
+Verify that your editable package is imported from the current worktree:
+
+```bash
+devpy python -c "import mypackage; print(mypackage.__file__)"
+```
+
+## Worktree-Local Config
+
+If `devpy.toml` is local machine config, ignore it with the git worktree's
+exclude file. In git worktrees, `.git` may be a file, so use `git rev-parse`:
+
+```bash
+EXCLUDE="$(git rev-parse --git-path info/exclude)"
+mkdir -p "$(dirname "$EXCLUDE")"
+printf '\n# Local devpy config\n/devpy.toml\n/.venv/\n' >> "$EXCLUDE"
+```
+
+If `devpy.toml` should be shared by the team, commit it instead and only ignore
+`.venv/`.
+
+## Multiple Editable Packages
+
+One worktree can own an environment for several local packages:
 
 ```toml
 [python]
-base_conda_env = "my-conda-env"
+base_conda_env = "myproject-shared"
 
 [editables]
 packages = [
@@ -56,11 +122,9 @@ Editable paths are resolved relative to the git root. They may point to sibling
 checkouts. The `.venv` path defaults to `.venv` and must stay inside the git
 root.
 
-Add `.venv/` to `.gitignore`.
+## Commands
 
-## Usage
-
-Show the current setup:
+Show configuration without creating `.venv`:
 
 ```bash
 devpy info
@@ -72,16 +136,13 @@ Create `.venv` if needed and install configured editables:
 devpy update-editables
 ```
 
-Run normal commands through the worktree `.venv`:
+Run normal commands with `.venv/bin` first on `PATH`:
 
 ```bash
-devpy python script.py
+devpy python -m pytest
 devpy pytest
+devpy my-console-script --help
 ```
-
-Editable installs are intentionally not managed through ad hoc
-`devpy pip install -e ...` commands. Add editable packages to `devpy.toml`, then
-run `devpy update-editables`.
 
 Remove the worktree `.venv`:
 
@@ -89,30 +150,91 @@ Remove the worktree `.venv`:
 devpy clean
 ```
 
-## Behavior
+## Editable Installs
 
-`devpy` does this:
+Editable installs are configured in `devpy.toml`, not through ad hoc pip
+commands.
 
-1. Uses `git rev-parse --show-toplevel` to find the current git worktree root.
-2. Requires `devpy.toml` at that root.
-3. Creates `.venv` with:
+These intentionally fail:
 
-   ```bash
-   conda run -n <base_conda_env> --no-capture-output \
-     python -m venv --system-site-packages .venv
-   ```
+```bash
+devpy pip install -e .
+devpy pip install --editable ../some-package
+devpy python -m pip install -e .
+```
 
-4. Runs normal commands with `.venv/bin` first on `PATH`.
-5. Sets `PYTHONNOUSERSITE=1`.
+Use this instead:
+
+```toml
+[editables]
+packages = [
+  ".",
+  "../some-package",
+]
+```
+
+```bash
+devpy update-editables
+```
 
 By default, `update-editables` uses `pip install --no-deps -e ...` because the
-base conda environment is expected to own dependencies. If a repo needs editable
-dependencies installed into `.venv`, set:
+base conda environment is expected to own dependencies. If a repo really needs
+editable dependencies installed into `.venv`, set:
 
 ```toml
 [editables]
 install_deps = true
 packages = ["."]
+```
+
+## Config Reference
+
+```toml
+[python]
+base_conda_env = "myproject-shared"
+venv = ".venv"
+
+[editables]
+packages = ["."]
+install_deps = false
+```
+
+Fields:
+
+- `python.base_conda_env`: required conda environment name.
+- `python.venv`: optional worktree-local virtual environment path. Defaults to
+  `.venv`.
+- `editables.packages`: editable package paths, relative to the git root.
+- `editables.install_deps`: whether pip should install dependencies while
+  installing editables. Defaults to `false`.
+
+## Troubleshooting
+
+If `devpy` is not found, install it in the active Python environment:
+
+```bash
+python -m pip install --upgrade devpy-runner
+```
+
+If `devpy` says `missing devpy.toml`, make sure you are inside a git worktree
+and that `devpy.toml` exists at the git root:
+
+```bash
+git rev-parse --show-toplevel
+```
+
+If imports come from the wrong place, check the active paths:
+
+```bash
+devpy info
+devpy python -c "import mypackage; print(mypackage.__file__)"
+```
+
+If `.venv` gets stale, remove and recreate it:
+
+```bash
+devpy clean
+devpy update-editables
 ```
 
 ## Unsupported By Design
