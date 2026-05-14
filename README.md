@@ -8,12 +8,36 @@ stack and each worktree needs its own editable Python installs.
 
 ## Why
 
-Git worktrees are useful for working on multiple branches at once, but Python
-editable installs make them easy to misuse:
+Imagine a large ML or robotics project with PyTorch, CUDA, Isaac Sim, MuJoCo, or
+other heavy native dependencies installed in conda.
 
-- one shared conda env can accidentally import code from the wrong worktree
-- one full conda env per worktree duplicates large dependencies
-- `PYTHONPATH` skips normal package metadata and console scripts
+Git worktrees let you keep several branches checked out at once:
+
+```text
+~/Projects/big_project_main
+~/Projects/big_project_experiment1
+~/Projects/big_project_experiment2
+```
+
+Usually, the expensive dependencies are the same in every worktree. The only
+thing that should differ is the editable install of your local package.
+
+Without `devpy`, the common choices are awkward:
+
+- use one shared conda env and risk importing the package from the wrong
+  worktree
+- create one full conda env per worktree and duplicate many gigabytes of
+  dependencies
+- use `PYTHONPATH`, which skips normal package metadata and console scripts
+
+`devpy` solves that specific problem:
+
+- one shared conda env owns the heavy dependency stack
+- each worktree gets a tiny `.venv` overlay for its editable installs
+- `devpy.toml` says which conda env and editable packages belong to that
+  worktree
+- `devpy <command>` runs inside the conda env, then puts the worktree `.venv`
+  first
 
 `devpy` keeps the split explicit:
 
@@ -53,13 +77,16 @@ devpy --help
 
 ## Quick Start
 
-Create a shared conda environment that has your normal dependencies, but not the
-editable package you are developing:
+Create one shared conda environment that has your normal dependencies, but not
+the editable package you are developing:
 
 ```bash
 conda create -n myproject-shared python=3.11 pip -y
 conda run -n myproject-shared python -m pip install -U pip
 ```
+
+For a real project, this is where you install PyTorch, CUDA-related packages,
+MuJoCo, Isaac Sim, or whatever heavy dependencies the project needs.
 
 In a git worktree, add `devpy.toml` at the git root:
 
