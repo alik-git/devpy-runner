@@ -2,9 +2,9 @@
 
 Editable Python installs in git worktrees without copying heavy dependencies.
 
-`devpy` runs commands through a git-worktree-local `.venv` overlay backed by a
-shared conda environment. Use it when conda owns the heavy dependency stack and
-each worktree needs its own editable Python installs.
+`devpy` runs commands inside a shared conda environment with a
+git-worktree-local `.venv` overlay. Use it when conda owns the heavy dependency
+stack and each worktree needs its own editable Python installs.
 
 ## Why
 
@@ -20,6 +20,11 @@ editable installs make them easy to misuse:
 - conda env: heavy shared dependencies
 - worktree `.venv`: editable local packages and console scripts
 - `devpy.toml`: the worktree's configuration
+
+You do not need to `conda activate` the shared environment before running
+`devpy` commands. `devpy` reads `devpy.toml`, applies the configured conda
+environment to the child process, and keeps the worktree `.venv/bin` first on
+`PATH`.
 
 ## Status
 
@@ -82,6 +87,10 @@ devpy pytest
 devpy python scripts/example.py
 ```
 
+These commands do not require `conda activate myproject-shared` first. The
+configured conda env still supplies native libraries, activation-script
+environment variables, and shared dependencies.
+
 Verify that your editable package is imported from the current worktree:
 
 ```bash
@@ -136,7 +145,8 @@ Create `.venv` if needed and install configured editables:
 devpy update-editables
 ```
 
-Run normal commands with `.venv/bin` first on `PATH`:
+Run normal commands inside the configured conda env, with `.venv/bin` first on
+`PATH`:
 
 ```bash
 devpy python -m pytest

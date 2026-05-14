@@ -15,6 +15,23 @@ from devpy_runner.config import DevpyConfig, DevpyError, load_config
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+_CONDA_LAUNCHER = """
+import os
+import sys
+
+venv_bin = sys.argv[1]
+command = sys.argv[2:]
+env = os.environ.copy()
+env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+env["PYTHONNOUSERSITE"] = "1"
+
+try:
+    os.execvpe(command[0], command, env)
+except FileNotFoundError:
+    print(f"devpy: command not found: {command[0]}", file=sys.stderr)
+    raise SystemExit(127) from None
+""".strip()
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the devpy command-line interface."""
@@ -118,7 +135,9 @@ def update_editables(config: DevpyConfig) -> None:
     for package in config.editable_packages:
         command.extend(["-e", str(package)])
 
-    run_checked(command, cwd=config.root, env=devpy_env(config))
+    run_checked(
+        conda_run_command(config, command), cwd=config.root, env=devpy_env(config)
+    )
 
 
 def clean(config: DevpyConfig) -> None:
@@ -151,10 +170,10 @@ def print_info(config: DevpyConfig) -> None:
 
 
 def run_passthrough(config: DevpyConfig, args: list[str]) -> int:
-    """Run a normal command with the worktree venv first on PATH."""
+    """Run a normal command inside conda with the worktree venv first on PATH."""
     try:
         completed = subprocess.run(  # noqa: S603
-            args,
+            conda_run_command(config, args),
             cwd=config.root,
             env=devpy_env(config),
             check=False,
@@ -162,6 +181,23 @@ def run_passthrough(config: DevpyConfig, args: list[str]) -> int:
     except FileNotFoundError as exc:
         raise DevpyError(f"command not found: {args[0]}") from exc
     return completed.returncode
+
+
+def conda_run_command(config: DevpyConfig, args: list[str]) -> list[str]:
+    """Wrap a command so conda activation applies before the venv overlay."""
+    return [
+        conda_executable(),
+        "run",
+        "-n",
+        config.base_conda_env,
+        "--no-capture-output",
+        "--",
+        "python",
+        "-c",
+        _CONDA_LAUNCHER,
+        str(config.venv / "bin"),
+        *args,
+    ]
 
 
 def reject_editable_pip_install(args: list[str]) -> None:

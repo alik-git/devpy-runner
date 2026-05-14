@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import subprocess
 from typing import TYPE_CHECKING
+from unittest.mock import ANY
 
 import pytest
 
 from devpy_runner.cli import (
     clean,
+    conda_run_command,
     devpy_env,
     ensure_venv,
     find_git_root,
     reject_editable_pip_install,
+    run_passthrough,
     update_editables,
 )
 from devpy_runner.config import DevpyConfig, DevpyError
@@ -110,10 +113,12 @@ def test_update_editables_installs_no_deps_by_default(
     package = tmp_path / "package"
     package.mkdir()
     calls: list[list[str]] = []
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         assert kwargs["cwd"] == tmp_path
+        assert kwargs["env"]["PATH"].split(":")[0] == str(tmp_path / ".venv" / "bin")
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -122,6 +127,16 @@ def test_update_editables_installs_no_deps_by_default(
 
     assert calls == [
         [
+            "/opt/conda/bin/conda",
+            "run",
+            "-n",
+            "base-env",
+            "--no-capture-output",
+            "--",
+            "python",
+            "-c",
+            ANY,
+            str(tmp_path / ".venv" / "bin"),
             str(tmp_path / ".venv" / "bin" / "python"),
             "-m",
             "pip",
@@ -130,6 +145,66 @@ def test_update_editables_installs_no_deps_by_default(
             "-e",
             str(package),
         ],
+    ]
+
+
+def test_passthrough_runs_inside_conda_with_venv_first(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run normal commands with conda activation and the worktree overlay."""
+    calls: list[list[str]] = []
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["env"]["PATH"].split(":")[0] == str(tmp_path / ".venv" / "bin")
+        return subprocess.CompletedProcess(args, 7)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    returncode = run_passthrough(config(tmp_path), ["pytest", "-q"])
+
+    assert returncode == 7
+    assert calls == [
+        [
+            "/opt/conda/bin/conda",
+            "run",
+            "-n",
+            "base-env",
+            "--no-capture-output",
+            "--",
+            "python",
+            "-c",
+            ANY,
+            str(tmp_path / ".venv" / "bin"),
+            "pytest",
+            "-q",
+        ],
+    ]
+
+
+def test_conda_run_command_separates_conda_args(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Separate conda options from the command being run."""
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+
+    assert conda_run_command(config(tmp_path), ["python", "--version"]) == [
+        "/opt/conda/bin/conda",
+        "run",
+        "-n",
+        "base-env",
+        "--no-capture-output",
+        "--",
+        "python",
+        "-c",
+        ANY,
+        str(tmp_path / ".venv" / "bin"),
+        "python",
+        "--version",
     ]
 
 
