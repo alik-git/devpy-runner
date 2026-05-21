@@ -8,29 +8,21 @@ stack and each worktree needs its own editable Python installs.
 
 ## Why
 
-Imagine a large ML or robotics project with PyTorch, CUDA, Isaac Sim, MuJoCo, or
-other heavy native dependencies installed in conda.
+If you have ever used Git worktrees for deep learning, you might be familiar with the following problem:
 
-Git worktrees let you keep several branches checked out at once:
+You are working on your project as an editable package installed locally,
+you have a conda env with big heavy packages like pytorch and cuda, and then you make a new git worktree to work on a feature in parallel. 
 
-```text
-~/Projects/big_project_main
-~/Projects/big_project_experiment1
-~/Projects/big_project_experiment2
-```
+You run your code and it does not behave as expected, because the editable python package was still pointing to your original repo, not the new worktree. Ouch.
 
-Usually, the expensive dependencies are the same in every worktree. The only
-thing that should differ is the editable install of your local package.
+So now you either have install the worktree as an editable package, which breaks your original repo!
 
-Without `devpy`, the common choices are awkward:
+Or you can set PYTHONPATH= each time you run a command! Ew!
 
-- use one shared conda env and risk importing the package from the wrong
-  worktree
-- create one full conda env per worktree and duplicate many gigabytes of
-  dependencies
-- use `PYTHONPATH`, which skips normal package metadata and console scripts
+Or you can just set up a new conda env to stay sane, but then after 3 worktrees you have 25GB of conda envs on your machine!
 
-`devpy` solves that specific problem:
+
+`devpy` solves this specific problem:
 
 - one shared conda env owns the heavy dependency stack
 - each worktree gets a tiny `.venv` overlay for its editable installs
@@ -49,11 +41,6 @@ You do not need to `conda activate` the shared environment before running
 `devpy` commands. `devpy` reads `devpy.toml`, applies the configured conda
 environment to the child process, and keeps the worktree `.venv/bin` first on
 `PATH`.
-
-## Status
-
-Version 1 is intentionally conda-only. It does not solve dependency management
-for every Python project; it solves the conda-backed worktree overlay workflow.
 
 ## Install
 
