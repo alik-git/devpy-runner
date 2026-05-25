@@ -55,10 +55,7 @@ def load_config(root: Path) -> DevpyConfig:
     editable_values = _optional_string_list(editables, "packages")
     install_deps = _optional_bool(editables, "install_deps", default=False)
 
-    editable_packages = tuple(
-        _resolve_path(root, value, field="editables.packages")
-        for value in editable_values
-    )
+    editable_packages = tuple(_resolve_path(root, value) for value in editable_values)
 
     return DevpyConfig(
         root=root,
@@ -125,8 +122,8 @@ def _resolve_repo_path(root: Path, value: str, *, field: str) -> Path:
     return resolved
 
 
-def _resolve_path(root: Path, value: str, *, field: str) -> Path:
+def _resolve_path(root: Path, value: str) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
-        raise DevpyError(f"devpy.toml {field} must be relative to the git root")
+        return path.resolve()
     return (root / path).resolve()

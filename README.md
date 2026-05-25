@@ -137,13 +137,15 @@ base_conda_env = "myproject-shared"
 packages = [
   ".",
   "../some-sibling-package",
+  "~/Projects/repos/some-canonical-package",
   "../another-sibling-package",
 ]
 ```
 
-Editable paths are resolved relative to the git root. They may point to sibling
-checkouts. The `.venv` path defaults to `.venv` and must stay inside the git
-root.
+Relative editable paths are resolved from the git root. Editable paths may also
+use absolute paths or `~`, which is useful for canonical shared checkouts such
+as `~/Projects/repos/IsaacLab`. The `.venv` path defaults to `.venv` and must
+stay inside the git root.
 
 ## Commands
 

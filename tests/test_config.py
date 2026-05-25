@@ -56,6 +56,48 @@ def test_editables_can_point_to_sibling_worktrees(tmp_path: Path) -> None:
     assert config.editable_packages == ((tmp_path / "../sibling").resolve(),)
 
 
+def test_editables_can_use_absolute_paths(tmp_path: Path) -> None:
+    """Allow editable packages to point at canonical checkouts."""
+    package = tmp_path / "repos" / "package"
+    write_config(
+        tmp_path,
+        f"""
+        [python]
+        base_conda_env = "example"
+
+        [editables]
+        packages = [{str(package)!r}]
+        """,
+    )
+
+    config = load_config(tmp_path)
+
+    assert config.editable_packages == (package,)
+
+
+def test_editables_can_use_tilde_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allow editable packages to use user-home anchored paths."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    write_config(
+        tmp_path,
+        """
+        [python]
+        base_conda_env = "example"
+
+        [editables]
+        packages = ["~/repos/package"]
+        """,
+    )
+
+    config = load_config(tmp_path)
+
+    assert config.editable_packages == (home / "repos" / "package",)
+
+
 def test_venv_must_stay_inside_git_root(tmp_path: Path) -> None:
     """Reject venv paths outside the current git root."""
     write_config(
