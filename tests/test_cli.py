@@ -14,6 +14,7 @@ from devpy_runner.cli import (
     devpy_env,
     ensure_venv,
     find_git_root,
+    print_info,
     reject_editable_pip_install,
     run_passthrough,
     update_editables,
@@ -27,11 +28,35 @@ if TYPE_CHECKING:
 def config(root: Path, *, editables: tuple[Path, ...] = ()) -> DevpyConfig:
     """Build a test config."""
     return DevpyConfig(
-        root=root,
+        project_root=root,
+        entry_config_path=root / "devpy.toml",
+        config_path=root / "devpy.toml",
+        config_root=root,
+        env_root=root,
+        command_cwd=root,
         base_conda_env="base-env",
         venv=root / ".venv",
         editable_packages=editables,
         install_editable_deps=False,
+    )
+
+
+def stack_config(root: Path, *, editables: tuple[Path, ...] = ()) -> DevpyConfig:
+    """Build a test stack config."""
+    project_root = root / "minerva_lab"
+    env_root = root
+    return DevpyConfig(
+        project_root=project_root,
+        entry_config_path=project_root / "devpy.toml",
+        config_path=root / "devpy.mlab.toml",
+        config_root=root,
+        env_root=env_root,
+        command_cwd=project_root,
+        base_conda_env="mlab-shared",
+        venv=env_root / ".devpy" / "mlab" / ".venv",
+        editable_packages=editables,
+        install_editable_deps=False,
+        config_kind="stack",
     )
 
 
@@ -218,12 +243,52 @@ def test_clean_removes_venv(tmp_path: Path) -> None:
     assert not venv.exists()
 
 
+def test_clean_refuses_shared_stack_venv_by_default(tmp_path: Path) -> None:
+    """Avoid deleting a shared stack venv without an explicit flag."""
+    cfg = stack_config(tmp_path)
+    cfg.venv.mkdir(parents=True)
+
+    with pytest.raises(DevpyError, match="refusing to remove shared stack venv"):
+        clean(cfg)
+
+    assert cfg.venv.exists()
+
+
+def test_clean_shared_removes_shared_stack_venv(tmp_path: Path) -> None:
+    """Remove a shared stack venv only when explicitly requested."""
+    cfg = stack_config(tmp_path)
+    cfg.venv.mkdir(parents=True)
+
+    clean(cfg, allow_shared=True)
+
+    assert not cfg.venv.exists()
+
+
 def test_devpy_env_prefers_venv_bin(tmp_path: Path) -> None:
     """Put the worktree venv first on PATH."""
     env = devpy_env(config(tmp_path))
 
     assert env["PATH"].split(":")[0] == str(tmp_path / ".venv" / "bin")
     assert env["PYTHONNOUSERSITE"] == "1"
+
+
+def test_print_info_includes_root_and_shared_venv_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Expose enough path detail to diagnose stack config mistakes."""
+    cfg = stack_config(tmp_path)
+
+    print_info(cfg)
+
+    out = capsys.readouterr().out
+    assert f"project root: {tmp_path / 'minerva_lab'}" in out
+    assert f"entry config: {tmp_path / 'minerva_lab' / 'devpy.toml'}" in out
+    assert f"effective config: {tmp_path / 'devpy.mlab.toml'}" in out
+    assert "config kind: stack" in out
+    assert "shared venv: yes" in out
+    assert f"env root: {tmp_path}" in out
+    assert f"command cwd: {tmp_path / 'minerva_lab'}" in out
 
 
 @pytest.mark.parametrize(

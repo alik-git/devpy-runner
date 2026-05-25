@@ -63,7 +63,7 @@ def _main(args: list[str]) -> int:
         update_editables(config)
         return 0
     if command == "clean":
-        clean(config)
+        clean(config, allow_shared=parse_clean_args(args[1:]))
         return 0
 
     reject_editable_pip_install(args)
@@ -97,7 +97,7 @@ def ensure_venv(config: DevpyConfig) -> None:
 
     config.venv.parent.mkdir(parents=True, exist_ok=True)
     print(
-        f"Creating {config.venv.relative_to(config.root)} from conda env: "
+        f"Creating {display_path(config.venv, root=config.env_root)} from conda env: "
         f"{config.base_conda_env}",
         file=sys.stderr,
     )
@@ -114,7 +114,7 @@ def ensure_venv(config: DevpyConfig) -> None:
             "--system-site-packages",
             str(config.venv),
         ],
-        cwd=config.root,
+        cwd=config.env_root,
     )
 
 
@@ -136,25 +136,40 @@ def update_editables(config: DevpyConfig) -> None:
         command.extend(["-e", str(package)])
 
     run_checked(
-        conda_run_command(config, command), cwd=config.root, env=devpy_env(config)
+        conda_run_command(config, command),
+        cwd=config.command_cwd,
+        env=devpy_env(config),
     )
 
 
-def clean(config: DevpyConfig) -> None:
+def clean(config: DevpyConfig, *, allow_shared: bool = False) -> None:
     """Remove the worktree virtual environment."""
+    if config.uses_shared_venv and not allow_shared:
+        raise DevpyError(
+            "refusing to remove shared stack venv without --shared:\n"
+            f"  env root: {config.env_root}\n"
+            f"  venv: {config.venv}\n\n"
+            "Run `devpy clean --shared` if you intentionally want to remove it.",
+        )
     if not config.venv.exists():
-        print(f"Already clean: {config.venv.relative_to(config.root)}")
+        print(f"Already clean: {display_path(config.venv, root=config.env_root)}")
         return
     if not config.venv.is_dir():
         raise DevpyError(f"venv path exists but is not a directory: {config.venv}")
     shutil.rmtree(config.venv)
-    print(f"Removed {config.venv.relative_to(config.root)}")
+    print(f"Removed {display_path(config.venv, root=config.env_root)}")
 
 
 def print_info(config: DevpyConfig) -> None:
     """Print the active devpy configuration."""
-    print(f"git root: {config.root}")
-    print(f"config: {config.root / 'devpy.toml'}")
+    print(f"project root: {config.project_root}")
+    print(f"entry config: {config.entry_config_path}")
+    print(f"effective config: {config.config_path}")
+    print(f"config kind: {config.config_kind}")
+    print(f"shared venv: {yes_no(config.uses_shared_venv)}")
+    print(f"config root: {config.config_root}")
+    print(f"env root: {config.env_root}")
+    print(f"command cwd: {config.command_cwd}")
     print(f"base conda env: {config.base_conda_env}")
     print(f"venv: {config.venv}")
     print(f"venv exists: {config.venv.is_dir()}")
@@ -174,7 +189,7 @@ def run_passthrough(config: DevpyConfig, args: list[str]) -> int:
     try:
         completed = subprocess.run(  # noqa: S603
             conda_run_command(config, args),
-            cwd=config.root,
+            cwd=config.command_cwd,
             env=devpy_env(config),
             check=False,
         )
@@ -212,6 +227,17 @@ def reject_editable_pip_install(args: list[str]) -> None:
         "`devpy update-editables`; do not run ad hoc `pip install -e ...` "
         "through devpy",
     )
+
+
+def parse_clean_args(args: list[str]) -> bool:
+    """Parse arguments for ``devpy clean``."""
+    allow_shared = False
+    for arg in args:
+        if arg == "--shared":
+            allow_shared = True
+            continue
+        raise DevpyError(f"unknown clean option: {arg}")
+    return allow_shared
 
 
 def _is_pip_install(args: list[str]) -> bool:
@@ -257,6 +283,19 @@ def devpy_env(config: DevpyConfig) -> dict[str, str]:
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     env["PYTHONNOUSERSITE"] = "1"
     return env
+
+
+def display_path(path: Path, *, root: Path) -> str:
+    """Display a path relative to a root when possible."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def yes_no(value: bool) -> str:
+    """Render a boolean for human-readable command output."""
+    return "yes" if value else "no"
 
 
 def conda_executable() -> str:
