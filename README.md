@@ -147,6 +147,71 @@ use absolute paths or `~`, which is useful for canonical shared checkouts such
 as `~/Projects/repos/IsaacLab`. The `.venv` path defaults to `.venv` and must
 stay inside the git root.
 
+## Explicit Stack Configs
+
+Several repos can share one dependency stack when they belong to the same local
+development context. Keep that relationship explicit with a small repo-local
+pointer config:
+
+```text
+worksets/my-feature/
+  devpy.backend.toml
+  .devpy/backend/.venv
+
+  api-service/
+    devpy.toml
+
+  worker-service/
+    devpy.toml
+```
+
+The shared stack config owns the base conda env, venv, and editable packages:
+
+```toml
+# worksets/my-feature/devpy.backend.toml
+[devpy]
+kind = "stack"
+
+[python]
+base_conda_env = "backend-shared"
+venv = ".devpy/backend/.venv"
+
+[editables]
+packages = [
+  "api-service",
+  "worker-service",
+  "~/Projects/repos/shared-library",
+]
+```
+
+Each repo opts into that stack explicitly:
+
+```toml
+# worksets/my-feature/api-service/devpy.toml
+[devpy]
+extends = "../devpy.backend.toml"
+```
+
+Run commands from the repo you are working in:
+
+```bash
+cd worksets/my-feature/api-service
+devpy info
+devpy update-editables
+devpy pytest
+```
+
+Commands run from the active repo root, while relative paths in the stack config
+resolve from the stack config directory. A workset can have more than one stack
+config when repos need different base conda environments.
+
+Stack venvs may be shared by several repos. `devpy clean` refuses to remove a
+shared stack venv unless you say so explicitly:
+
+```bash
+devpy clean --shared
+```
+
 ## Commands
 
 Show configuration without creating `.venv`:
@@ -174,6 +239,12 @@ Remove the worktree `.venv`:
 
 ```bash
 devpy clean
+```
+
+Remove a shared stack `.venv`:
+
+```bash
+devpy clean --shared
 ```
 
 ## Editable Installs
@@ -215,6 +286,8 @@ packages = ["."]
 
 ## Config Reference
 
+Repo-local config:
+
 ```toml
 [python]
 base_conda_env = "myproject-shared"
@@ -225,12 +298,40 @@ packages = ["."]
 install_deps = false
 ```
 
+Pointer config:
+
+```toml
+[devpy]
+extends = "../devpy.backend.toml"
+```
+
+Stack config:
+
+```toml
+[devpy]
+kind = "stack"
+
+[python]
+base_conda_env = "backend-shared"
+venv = ".devpy/backend/.venv"
+
+[editables]
+packages = ["api-service", "worker-service"]
+install_deps = false
+```
+
 Fields:
 
+- `devpy.extends`: optional path from a repo-local pointer config to one stack
+  config.
+- `devpy.kind`: set to `"stack"` in stack configs.
 - `python.base_conda_env`: required conda environment name.
-- `python.venv`: optional worktree-local virtual environment path. Defaults to
-  `.venv`.
-- `editables.packages`: editable package paths, relative to the git root.
+- `python.venv`: optional virtual environment path. Defaults to `.venv`. In
+  repo configs, it must stay inside the repo root. In stack configs, it must
+  stay inside the stack config directory. Absolute paths are accepted only when
+  they remain inside the allowed root.
+- `editables.packages`: editable package paths. Relative paths resolve from the
+  config file that declares them. Absolute paths and `~` are also accepted.
 - `editables.install_deps`: whether pip should install dependencies while
   installing editables. Defaults to `false`.
 
