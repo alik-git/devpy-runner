@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,19 +18,34 @@ if TYPE_CHECKING:
 
 _CONDA_LAUNCHER = """
 import os
+import subprocess
 import sys
 
 venv_bin = sys.argv[1]
-command = sys.argv[2:]
+status_path = sys.argv[2]
+command = sys.argv[3:]
 env = os.environ.copy()
 env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
 env["PYTHONNOUSERSITE"] = "1"
 
+def write_status(returncode):
+    normalized = returncode
+    if normalized < 0:
+        normalized = 128 + abs(normalized)
+    tmp_path = status_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as file:
+        file.write(f"{normalized}\\n")
+    os.replace(tmp_path, status_path)
+
 try:
-    os.execvpe(command[0], command, env)
+    completed = subprocess.run(command, env=env)
 except FileNotFoundError:
     print(f"devpy: command not found: {command[0]}", file=sys.stderr)
-    raise SystemExit(127) from None
+    write_status(127)
+except KeyboardInterrupt:
+    write_status(130)
+else:
+    write_status(completed.returncode)
 """.strip()
 
 
@@ -135,11 +151,11 @@ def update_editables(config: DevpyConfig) -> None:
     for package in config.editable_packages:
         command.extend(["-e", str(package)])
 
-    run_checked(
-        conda_run_command(config, command),
-        cwd=config.command_cwd,
-        env=devpy_env(config),
-    )
+    returncode = run_conda_overlay(config, command)
+    if returncode != 0:
+        raise DevpyError(
+            f"command failed with exit code {returncode}: {_quote(command)}",
+        )
 
 
 def clean(config: DevpyConfig, *, allow_shared: bool = False) -> None:
@@ -186,19 +202,47 @@ def print_info(config: DevpyConfig) -> None:
 
 def run_passthrough(config: DevpyConfig, args: list[str]) -> int:
     """Run a normal command inside conda with the worktree venv first on PATH."""
+    return run_conda_overlay(config, args)
+
+
+def run_conda_overlay(config: DevpyConfig, args: list[str]) -> int:
+    """Run a command through conda and return the child command exit status."""
+    status_path = make_status_path()
     try:
-        completed = subprocess.run(  # noqa: S603
-            conda_run_command(config, args),
-            cwd=config.command_cwd,
-            env=devpy_env(config),
-            check=False,
+        try:
+            command = conda_run_command(config, args, status_path=status_path)
+            completed = subprocess.run(  # noqa: S603
+                command,
+                cwd=config.command_cwd,
+                env=devpy_env(config),
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise DevpyError(f"command not found: {command[0]}") from exc
+
+        if status_path.is_file():
+            return read_exit_status(status_path)
+        if completed.returncode != 0:
+            raise DevpyError(
+                "conda failed before the devpy command ran with exit code "
+                f"{completed.returncode}:\n"
+                f"  conda env: {config.base_conda_env}\n"
+                f"  command: {_quote(args)}",
+            )
+        raise DevpyError(
+            "devpy launcher did not report the command exit status",
         )
-    except FileNotFoundError as exc:
-        raise DevpyError(f"command not found: {args[0]}") from exc
-    return completed.returncode
+    finally:
+        status_path.unlink(missing_ok=True)
+        status_path.with_suffix(status_path.suffix + ".tmp").unlink(missing_ok=True)
 
 
-def conda_run_command(config: DevpyConfig, args: list[str]) -> list[str]:
+def conda_run_command(
+    config: DevpyConfig,
+    args: list[str],
+    *,
+    status_path: Path,
+) -> list[str]:
     """Wrap a command so conda activation applies before the venv overlay."""
     return [
         conda_executable(),
@@ -211,6 +255,7 @@ def conda_run_command(config: DevpyConfig, args: list[str]) -> list[str]:
         "-c",
         _CONDA_LAUNCHER,
         str(config.venv / "bin"),
+        str(status_path),
         *args,
     ]
 
@@ -283,6 +328,27 @@ def devpy_env(config: DevpyConfig) -> dict[str, str]:
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     env["PYTHONNOUSERSITE"] = "1"
     return env
+
+
+def make_status_path() -> Path:
+    """Allocate a temporary path for the conda launcher status file."""
+    handle, name = tempfile.mkstemp(prefix="devpy-status-", suffix=".txt")
+    os.close(handle)
+    path = Path(name)
+    path.unlink()
+    return path
+
+
+def read_exit_status(status_path: Path) -> int:
+    """Read and validate a child command exit status."""
+    text = status_path.read_text(encoding="utf-8").strip()
+    try:
+        returncode = int(text)
+    except ValueError as exc:
+        raise DevpyError(f"invalid devpy launcher exit status: {text!r}") from exc
+    if returncode < 0:
+        raise DevpyError(f"invalid devpy launcher exit status: {returncode}")
+    return returncode
 
 
 def display_path(path: Path, *, root: Path) -> str:

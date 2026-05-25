@@ -3,26 +3,27 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+import sys
+from pathlib import Path
 from unittest.mock import ANY
 
 import pytest
 
 from devpy_runner.cli import (
+    _CONDA_LAUNCHER,
     clean,
     conda_run_command,
     devpy_env,
     ensure_venv,
     find_git_root,
     print_info,
+    read_exit_status,
     reject_editable_pip_install,
+    run_conda_overlay,
     run_passthrough,
     update_editables,
 )
 from devpy_runner.config import DevpyConfig, DevpyError
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def config(root: Path, *, editables: tuple[Path, ...] = ()) -> DevpyConfig:
@@ -58,6 +59,11 @@ def stack_config(root: Path, *, editables: tuple[Path, ...] = ()) -> DevpyConfig
         install_editable_deps=False,
         config_kind="stack",
     )
+
+
+def write_launcher_status(args: list[str], returncode: int) -> None:
+    """Write the child status path embedded in a conda launcher command."""
+    Path(args[10]).write_text(f"{returncode}\n", encoding="utf-8")
 
 
 def test_find_git_root_uses_git_command(
@@ -137,13 +143,16 @@ def test_update_editables_installs_no_deps_by_default(
     """Install configured editable packages with no dependency solving."""
     package = tmp_path / "package"
     package.mkdir()
+    status_path = tmp_path / "status.txt"
     calls: list[list[str]] = []
     monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+    monkeypatch.setattr("devpy_runner.cli.make_status_path", lambda: status_path)
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         assert kwargs["cwd"] == tmp_path
         assert kwargs["env"]["PATH"].split(":")[0] == str(tmp_path / ".venv" / "bin")
+        write_launcher_status(args, 0)
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -162,6 +171,7 @@ def test_update_editables_installs_no_deps_by_default(
             "-c",
             ANY,
             str(tmp_path / ".venv" / "bin"),
+            str(status_path),
             str(tmp_path / ".venv" / "bin" / "python"),
             "-m",
             "pip",
@@ -178,14 +188,17 @@ def test_passthrough_runs_inside_conda_with_venv_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Run normal commands with conda activation and the worktree overlay."""
+    status_path = tmp_path / "status.txt"
     calls: list[list[str]] = []
     monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+    monkeypatch.setattr("devpy_runner.cli.make_status_path", lambda: status_path)
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         assert kwargs["cwd"] == tmp_path
         assert kwargs["env"]["PATH"].split(":")[0] == str(tmp_path / ".venv" / "bin")
-        return subprocess.CompletedProcess(args, 7)
+        write_launcher_status(args, 7)
+        return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -204,10 +217,74 @@ def test_passthrough_runs_inside_conda_with_venv_first(
             "-c",
             ANY,
             str(tmp_path / ".venv" / "bin"),
+            str(status_path),
             "pytest",
             "-q",
         ],
     ]
+
+
+def test_run_conda_overlay_reports_conda_infrastructure_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Treat missing status plus failed conda as an infrastructure failure."""
+    status_path = tmp_path / "status.txt"
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+    monkeypatch.setattr("devpy_runner.cli.make_status_path", lambda: status_path)
+
+    def fake_run(
+        args: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 127)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(DevpyError, match="conda failed before"):
+        run_conda_overlay(config(tmp_path), ["python", "--version"])
+
+
+def test_run_conda_overlay_requires_launcher_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Treat missing status plus successful conda as a devpy launcher bug."""
+    status_path = tmp_path / "status.txt"
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+    monkeypatch.setattr("devpy_runner.cli.make_status_path", lambda: status_path)
+
+    def fake_run(
+        args: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(DevpyError, match="did not report"):
+        run_conda_overlay(config(tmp_path), ["python", "--version"])
+
+
+def test_update_editables_raises_child_failure_without_conda_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Report pip failures from the launcher status file."""
+    package = tmp_path / "package"
+    package.mkdir()
+    status_path = tmp_path / "status.txt"
+    monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+    monkeypatch.setattr("devpy_runner.cli.make_status_path", lambda: status_path)
+
+    def fake_run(
+        args: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        write_launcher_status(args, 9)
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(DevpyError, match="exit code 9"):
+        update_editables(config(tmp_path, editables=(package,)))
 
 
 def test_conda_run_command_separates_conda_args(
@@ -216,8 +293,13 @@ def test_conda_run_command_separates_conda_args(
 ) -> None:
     """Separate conda options from the command being run."""
     monkeypatch.setenv("CONDA_EXE", "/opt/conda/bin/conda")
+    status_path = tmp_path / "status.txt"
 
-    assert conda_run_command(config(tmp_path), ["python", "--version"]) == [
+    assert conda_run_command(
+        config(tmp_path),
+        ["python", "--version"],
+        status_path=status_path,
+    ) == [
         "/opt/conda/bin/conda",
         "run",
         "-n",
@@ -228,9 +310,57 @@ def test_conda_run_command_separates_conda_args(
         "-c",
         ANY,
         str(tmp_path / ".venv" / "bin"),
+        str(status_path),
         "python",
         "--version",
     ]
+
+
+def test_launcher_records_child_exit_without_failing(tmp_path: Path) -> None:
+    """Keep conda successful while recording the child command's failure code."""
+    status_path = tmp_path / "status.txt"
+
+    completed = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            _CONDA_LAUNCHER,
+            str(tmp_path),
+            str(status_path),
+            sys.executable,
+            "-c",
+            "raise SystemExit(7)",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert read_exit_status(status_path) == 7
+
+
+def test_launcher_records_missing_command_as_127(tmp_path: Path) -> None:
+    """Return command-not-found through the status file, not launcher failure."""
+    status_path = tmp_path / "status.txt"
+
+    completed = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            _CONDA_LAUNCHER,
+            str(tmp_path),
+            str(status_path),
+            "definitely-not-a-devpy-test-command",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert "command not found" in completed.stderr
+    assert read_exit_status(status_path) == 127
 
 
 def test_clean_removes_venv(tmp_path: Path) -> None:
