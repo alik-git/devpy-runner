@@ -16,6 +16,12 @@ from devpy_runner.config import DevpyConfig, DevpyError, load_config
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+_DEPRECATION_NOTICE = (
+    "WARNING: devpy-runner is deprecated. Use notuv instead:\n"
+    "  python -m pip install --upgrade notuv\n"
+    "  notuv <same arguments>"
+)
+
 _CONDA_LAUNCHER = """
 import os
 import subprocess
@@ -65,6 +71,8 @@ def _main(args: list[str]) -> int:
     if not args or args[0] in {"-h", "--help"}:
         _print_help()
         return 0
+
+    print(_DEPRECATION_NOTICE, file=sys.stderr)
 
     root = find_git_root(Path.cwd())
     config = load_config(root)
@@ -380,7 +388,10 @@ def conda_executable() -> str:
 def _print_help() -> None:
     parser = argparse.ArgumentParser(
         prog="devpy",
-        description="Run Python commands through a worktree-local .venv overlay.",
+        description=(
+            "DEPRECATED: devpy-runner has moved to notuv. "
+            "Run Python commands through a worktree-local .venv overlay."
+        ),
     )
     parser.add_argument(
         "command",
@@ -389,6 +400,7 @@ def _print_help() -> None:
     )
     parser.print_help()
     print(
+        f"\n{_DEPRECATION_NOTICE}\n"
         "\nExamples:\n"
         "  devpy info\n"
         "  devpy update-editables\n"

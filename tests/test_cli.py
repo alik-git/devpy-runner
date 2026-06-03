@@ -16,6 +16,7 @@ from devpy_runner.cli import (
     devpy_env,
     ensure_venv,
     find_git_root,
+    main,
     print_info,
     read_exit_status,
     reject_editable_pip_install,
@@ -64,6 +65,41 @@ def stack_config(root: Path, *, editables: tuple[Path, ...] = ()) -> DevpyConfig
 def write_launcher_status(args: list[str], returncode: int) -> None:
     """Write the child status path embedded in a conda launcher command."""
     Path(args[10]).write_text(f"{returncode}\n", encoding="utf-8")
+
+
+def test_help_includes_deprecation_notice(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Tell users that devpy-runner has moved when they ask for help."""
+    assert main(["--help"]) == 0
+
+    out = capsys.readouterr().out
+    assert "devpy-runner is deprecated" in out
+    assert "python -m pip install --upgrade notuv" in out
+    assert "notuv <same arguments>" in out
+
+
+def test_normal_command_prints_deprecation_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Warn on ordinary command usage without changing the command exit code."""
+    cfg = config(tmp_path)
+    monkeypatch.setattr("devpy_runner.cli.find_git_root", lambda _cwd: tmp_path)
+    monkeypatch.setattr("devpy_runner.cli.load_config", lambda _root: cfg)
+    monkeypatch.setattr("devpy_runner.cli.ensure_venv", lambda _config: None)
+    monkeypatch.setattr(
+        "devpy_runner.cli.run_passthrough",
+        lambda _config, _args: 7,
+    )
+
+    assert main(["python", "--version"]) == 7
+
+    captured = capsys.readouterr()
+    assert "devpy-runner is deprecated" in captured.err
+    assert "python -m pip install --upgrade notuv" in captured.err
+    assert "notuv <same arguments>" in captured.err
 
 
 def test_find_git_root_uses_git_command(

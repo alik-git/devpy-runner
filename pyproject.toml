@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devpy-runner"
-version = "0.1.4"
-description = "Editable Python installs in git worktrees without copying heavy dependencies."
+version = "0.1.5"
+description = "Deprecated predecessor of notuv for conda-backed worktree overlays."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [

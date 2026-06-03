@@ -1,5 +1,18 @@
 # devpy-runner
 
+> Deprecated: `devpy-runner` has moved to
+> [`notuv`](https://github.com/alik-git/notuv). Install and use `notuv` for new
+> work:
+>
+> ```bash
+> python -m pip install --upgrade notuv
+> notuv <same arguments>
+> ```
+>
+> This package remains available temporarily for old branches, old VM images,
+> and worksets that still use `devpy`, `devpy.toml`, `[devpy]`,
+> `devpy.*.toml`, or `.devpy`.
+
 Editable Python installs in git worktrees without copying heavy dependencies.
 
 `devpy` runs commands inside a shared conda environment with a
@@ -44,7 +57,14 @@ environment to the child process, and keeps the worktree `.venv/bin` first on
 
 ## Install
 
-From PyPI:
+For new work, install `notuv` instead:
+
+```bash
+python -m pip install --upgrade notuv
+```
+
+For old branches or VM images that still require `devpy`, install this legacy
+package from PyPI:
 
 ```bash
 python -m pip install devpy-runner
@@ -341,6 +361,13 @@ If `devpy` is not found, install it in the active Python environment:
 
 ```bash
 python -m pip install --upgrade devpy-runner
+```
+
+For new work, install and run `notuv` instead:
+
+```bash
+python -m pip install --upgrade notuv
+notuv <same arguments>
 ```
 
 If `devpy` says `missing devpy.toml`, make sure you are inside a git worktree
